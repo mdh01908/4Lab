@@ -1,0 +1,206 @@
+---
+title: "4lab_work"
+author: "Michelle Hernandez"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(data.table)
+```
+
+## 1. Read in Data
+
+```{r}
+library(data.table)
+if (!file.exists("met_all.gz"))
+  download.file(
+    url = "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/02_met/met_all.gz",
+    destfile = "met_all.gz",
+    method   = "libcurl",
+    timeout  = 60
+  )
+met <- fread("met_all.gz")
+```
+
+## 2. Prepare data
+
+week_dates
+
+```{r}
+met <- met[temp > -17 & !(elev == 9999.0), elev := NA]
+
+#met$date <- as.Date(paste(met$year, met$month, met$day, sep = "-"))
+
+met[, date := as.Date(paste(year, month, day, sep = "-"))]
+
+# this works to keep first week
+start_date <- as.Date("2019-08-01")
+end_date <- as.Date("2019-08-07")
+metfw <- met[met$date >= start_date & met$date <= end_date, ]
+
+
+
+# New sets of variables using "fast" ifelse from data.table
+metfw[, region   := fifelse(lon > -98 & lat>39.71, "NE",
+                      fifelse(lon > -98 & lat<39.71, "SE",
+                      fifelse(lon < -98 & lat<39.71, "SW",
+                      fifelse(lon < -98 & lat>39.71, "NW", 'Other' ))))]
+
+
+metfw[, elev_cat := fifelse(elev > 252, "high", "low")]
+
+
+met_avg <- metfw[,.(
+  temp     = mean(temp,na.rm=TRUE),
+  rh       = mean(rh,na.rm=TRUE),
+  wind.sp  = mean(wind.sp,na.rm=TRUE),
+  vis.dist = mean(vis.dist,na.rm=TRUE),
+  dew.point = mean(dew.point,na.rm=TRUE),
+  lat      = mean(lat),
+  lon      = mean(lon), 
+  elev     = mean(elev,na.rm=TRUE),
+  region = region[1],     
+  elev_cat = elev_cat[1] 
+), by=c("USAFID")]
+```
+
+## 3. use geom_violin
+
+```{r}
+met_avg[!is.na(met_avg$dew.point)] %>%
+  ggplot()+
+  geom_violin(mapping=aes(x=1, y=dew.point, fill=region)) +
+  facet_wrap(~ region)
+
+```
+
+```{r}
+met_avg[!is.na(met_avg$wind.sp)] %>%
+  ggplot()+
+  geom_violin(mapping=aes(x=1, y=wind.sp, fill=region)) +
+  facet_wrap(~ region)
+```
+
+```{r}
+filtered_met_avg <- met_avg[!is.na(met_avg$wind.sp) & !is.na(met_avg$dew.point), ]
+ggplot(filtered_met_avg, aes(x = 1, y = dew.point, fill = region)) +
+  geom_violin() +
+  geom_violin(aes(y = wind.sp)) +
+  facet_wrap(~ region)
+
+```
+
+## 4. use geom_jitter with stat_smooth to examine association btwn dew point and wind speed
+
+```{r}
+jitter <- ggplot(data = met_avg) + 
+  geom_point(mapping = aes(x = wind.sp, y = dew.point), position = "jitter") + 
+  geom_smooth(mapping = aes(x = wind.sp, y = dew.point))
+
+jitter
+```
+
+```{r}
+met_avg %>%
+  ggplot(aes(x = wind.sp, y = dew.point, color = region)) +
+  geom_jitter() +
+  stat_smooth(method = "lm", formula = y ~ x, se = FALSE, na.rm = TRUE) 
+  
+  
+
+
+```
+
+## 5. **Use `geom_bar` to create barplots of the weather stations by elevation category colored by region**
+
+```{r}
+met_avg[!is.na(met_avg$elev_cat)] %>%
+  ggplot()+
+  geom_bar(mapping=aes(x=elev_cat,y=, fill=region, position="dodge"))
+
+
+```
+
+## 6. **Use `stat_summary` to examine mean dew point and wind speed by region with standard deviation error bars**
+
+```{r}
+library(ggplot2)
+
+met_avg[!is.na(met_avg$wind.sp)] %>%
+  ggplot() +
+  stat_summary(
+    mapping = aes(x = region, y = wind.sp),
+    fun.y = "mean",
+    geom = "bar"
+  ) +
+  geom_errorbar(
+    mapping = aes(x = region, ymin = wind.sp - sd(wind.sp), ymax = wind.sp + sd(wind.sp)),
+    width = 0.2
+  )
+
+
+```
+
+## 7. **Make a map showing the spatial trend in relative humidity in the US**
+
+```{r}
+
+library(leaflet)
+library(dplyr)
+
+
+met_avg <- met_avg[!is.na(met_avg$rh), ]
+
+humid.pal <- colorBin(
+  palette = c("pink", "plum", "sienna2", "lightcyan", "mediumaquamarine"),  # Customize your colors here
+  domain = met_avg$rh, bins = 5
+)
+
+
+humid_map <- leaflet(met_avg) %>%
+  addProviderTiles('CartoDB.Positron') %>%
+  addCircles(
+    lat = ~lat, 
+    lng = ~lon,
+    label = ~paste0("RH: ", round(rh, 2), "%"),
+    color = ~humid.pal(rh),
+    opacity = 1,
+    fillOpacity = 1,
+    radius = 500
+  ) %>%
+
+  addMarkers(
+    data = met_avg %>%
+      arrange(desc(rh)) %>%
+      slice_head(n = 10),
+    label = ~paste0("Top 10: ", round(rh, 2), "%"),
+    icon = awesomeIcons(
+      icon = "star",
+      markerColor = "red",
+      library = "ion",
+      iconColor = "white"
+    )
+  )
+
+humid_map
+
+
+```
+
+## 8. **Use a ggplot extension**
+
+```{r}
+library(gganimate)
+```
+
+```{r}
+
+ggplot(data=met) + 
+  geom_point(mapping=aes(x=date, y=temp)) +
+  labs(title ='Temp over time', x='date', y='temp')+
+  transition_time(date)+
+  ease_aes('linear')
+  
+```
