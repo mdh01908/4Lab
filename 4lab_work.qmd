@@ -1,7 +1,9 @@
 ---
 title: "4lab_work"
 author: "Michelle Hernandez"
-format: html
+format:
+  html:
+    embed-resources: true
 editor: visual
 ---
 
